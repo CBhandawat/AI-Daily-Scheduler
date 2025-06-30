@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Daily Scheduler</title>
+  <meta name="theme-color" content="#4c6ef5"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-b from-blue-50 to-blue-100 min-h-screen font-inter text-gray-800">
+
+  <div class="max-w-6xl mx-auto py-8 px-4">
+    <h1 class="text-3xl font-semibold mb-4 text-center">AI Daily Scheduler</h1>
+    <p class="text-center mb-6">Type your plan for the day and let AI create your schedule.</p>
+
+    <!-- Input Area -->
+    <div class="bg-white p-4 rounded-lg shadow mb-6">
+      <textarea id="prompt" rows="4" placeholder="E.g., Hey my manager, I have meetings at 12 and 4..." class="w-full p-3 border rounded-lg focus:outline-none"></textarea>
+      <button id="parseBtn" class="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg transition">
+        Analyze Plan
+      </button>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Questions Panel -->
+      <div id="questions" class="space-y-4"></div>
+
+      <!-- Schedule Panel -->
+      <div id="schedule" class="space-y-4"></div>
+    </div>
+
+    <!-- Generate Schedule Button -->
+    <div class="flex justify-center mt-6">
+      <button id="generateBtn" class="bg-green-500 hover:bg-green-600 text-white py-2 px-6 rounded-lg transition hidden">
+        Generate Schedule
+      </button>
+    </div>
+
+    <!-- Update Instructions Panel -->
+    <div id="updateSection" class="mt-8 flex justify-center"></div>
+  </div>
+
+  <script>
+    const parseBtn = document.getElementById('parseBtn');
+    const generateBtn = document.getElementById('generateBtn');
+    const promptInput = document.getElementById('prompt');
+    const questionsDiv = document.getElementById('questions');
+    const scheduleDiv = document.getElementById('schedule');
+    const updateSection = document.getElementById('updateSection');
+
+    let clarifyingQuestions = [];
+    let originalPrompt = "";
+    let currentSchedule = null;
+
+    async function parsePrompt() {
+      const prompt = promptInput.value.trim();
+      if (!prompt) return;
+
+      originalPrompt = prompt;
+      questionsDiv.innerHTML = '<div class="text-gray-500">Analyzing your plan...</div>';
+      scheduleDiv.innerHTML = '';
+      updateSection.innerHTML = '';
+      generateBtn.classList.add('hidden');
+
+      const response = await fetch('http://127.0.0.1:5000/parse_prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      });
+      const data = await response.json();
+
+      console.log("Parse response:", data);
+      questionsDiv.innerHTML = '';
+
+      if (data.parsed_tasks && data.parsed_tasks.length > 0) {
+        const summary = document.createElement('div');
+        summary.className = 'bg-white p-4 rounded-lg border shadow';
+        summary.innerHTML = `<h2 class="font-semibold mb-2">Detected Tasks:</h2>` +
+          data.parsed_tasks.map(t => `<p>- ${t.task}${t.start ? " at " + t.start : ""}</p>`).join('');
+        questionsDiv.appendChild(summary);
+      }
+
+      if (data.clarifying_questions && data.clarifying_questions.length > 0) {
+        clarifyingQuestions = data.clarifying_questions;
+
+        const form = document.createElement('div');
+        form.className = 'bg-white p-4 rounded-lg border shadow';
+        form.innerHTML = `<h2 class="font-semibold mb-2">Please answer these questions:</h2>` +
+          clarifyingQuestions.map((q, i) => `
+            <div class="mb-2">
+              <label class="block text-gray-700 mb-1">${q}</label>
+              <input type="text" id="answer-${i}" class="w-full border p-2 rounded" />
+            </div>
+          `).join('');
+        questionsDiv.appendChild(form);
+      } else {
+        clarifyingQuestions = [];
+      }
+
+      generateBtn.classList.remove('hidden');
+    }
+
+    async function generateSchedule(answers) {
+      scheduleDiv.innerHTML = '<div class="text-gray-500">Generating schedule...</div>';
+      updateSection.innerHTML = '';
+
+      const response = await fetch('http://127.0.0.1:5000/generate_schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: originalPrompt,
+          answers: answers.map((a, i) => ({
+            question: clarifyingQuestions[i],
+            answer: a
+          }))
+        })
+      });
+      const data = await response.json();
+
+      console.log("Schedule response:", data);
+      scheduleDiv.innerHTML = '';
+      // Freeze clarifying answers
+      questionsDiv.innerHTML = '';
+
+      if (clarifyingQuestions.length > 0) {
+        const frozen = document.createElement('div');
+        frozen.className = 'bg-white p-4 rounded-lg border shadow';
+        frozen.innerHTML = `<h2 class="font-semibold mb-2">Clarifying Answers:</h2>` +
+            clarifyingQuestions.map((q, i) => `
+            <div class="mb-2">
+                <label class="block text-gray-700 mb-1">${q}</label>
+                <div class="w-full border p-2 rounded bg-gray-50">${answers[i] || "(No answer provided)"}</div>
+            </div>
+            `).join('');
+        questionsDiv.appendChild(frozen);
+      }
+
+
+      if (!data.schedule || !Array.isArray(data.schedule)) {
+        scheduleDiv.innerHTML = '<div class="text-red-500">Error: Invalid schedule data received.</div>';
+        console.error('Invalid schedule:', data);
+        return;
+      }
+
+      currentSchedule = data.schedule;
+
+      data.schedule.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'bg-white p-4 rounded-lg shadow border';
+        card.innerHTML = `
+          <div class="flex justify-between">
+            <span class="font-semibold">${item.task}</span>
+            <span class="text-gray-500">${item.start}</span>
+          </div>
+          <p class="text-gray-600">Duration: ${item.duration}</p>
+        `;
+        scheduleDiv.appendChild(card);
+      });
+
+      if (data.note) {
+        const note = document.createElement('p');
+        note.className = 'text-sm text-gray-500 mt-2';
+        note.textContent = `Note: ${data.note}`;
+        scheduleDiv.appendChild(note);
+      }
+
+      showUpdateControls();
+    }
+
+    function showUpdateControls() {
+      updateSection.innerHTML = `
+        <div class="bg-white p-4 rounded-lg shadow w-full md:w-2/3">
+          <h2 class="font-semibold mb-2 text-center">Want to tweak or edit anything?</h2>
+          <textarea id="update-instructions" rows="3" placeholder="E.g., Make my meeting 30 minutes instead of 2 hours..." class="w-full p-2 border rounded mb-2"></textarea>
+          <button id="updateBtn" class="w-full bg-purple-500 hover:bg-purple-600 text-white py-2 rounded-lg transition">
+            Update Schedule
+          </button>
+        </div>
+      `;
+
+      document.getElementById('updateBtn').addEventListener('click', async () => {
+        const instructions = document.getElementById('update-instructions').value.trim();
+        if (!instructions) return;
+        await updateSchedule(instructions);
+      });
+    }
+
+    async function updateSchedule(instructions) {
+      scheduleDiv.innerHTML = '<div class="text-gray-500">Updating schedule...</div>';
+      updateSection.innerHTML = '';
+
+      const response = await fetch('http://127.0.0.1:5000/update_schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: originalPrompt,
+          clarifications: clarifyingQuestions.map((q, i) => ({
+            question: q,
+            answer: document.getElementById(`answer-${i}`)?.value || ""
+          })),
+          previous_schedule: currentSchedule,
+          instructions: instructions
+        })
+      });
+      const data = await response.json();
+
+      console.log("Update response:", data);
+      scheduleDiv.innerHTML = '';
+
+      if (!data.schedule || !Array.isArray(data.schedule)) {
+        scheduleDiv.innerHTML = '<div class="text-red-500">Error: Invalid updated schedule data received.</div>';
+        console.error('Invalid updated schedule:', data);
+        return;
+      }
+
+      currentSchedule = data.schedule;
+
+      data.schedule.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'bg-white p-4 rounded-lg shadow border';
+        card.innerHTML = `
+          <div class="flex justify-between">
+            <span class="font-semibold">${item.task}</span>
+            <span class="text-gray-500">${item.start}</span>
+          </div>
+          <p class="text-gray-600">Duration: ${item.duration}</p>
+        `;
+        scheduleDiv.appendChild(card);
+      });
+
+      if (data.note) {
+        const note = document.createElement('p');
+        note.className = 'text-sm text-gray-500 mt-2';
+        note.textContent = `Note: ${data.note}`;
+        scheduleDiv.appendChild(note);
+      }
+
+      showUpdateControls();
+    }
+
+    parseBtn.addEventListener('click', parsePrompt);
+
+    generateBtn.addEventListener('click', async () => {
+      const answers = clarifyingQuestions.map((q, i) => {
+        const input = document.getElementById(`answer-${i}`);
+        return input ? input.value.trim() : "";
+      });
+      await generateSchedule(answers);
+    });
+  </script>
+</body>
+</html>
